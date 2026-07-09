@@ -58,6 +58,28 @@ def test_inspect_ledger_on_no_calls_reports_zero_signals():
     assert inspect_ledger([]) == LedgerVerdict(repeats=0)
 
 
+def test_identical_repeated_calls_do_not_inflate_the_result_signal():
+    call = ToolCall("runSql", {"query": "select 1"}, output=[])
+    verdict = inspect_ledger([call, call, call])
+    assert verdict.repeats == 3
+    assert verdict.stale_results == 1
+
+
+def test_window_zero_or_below_inspects_nothing():
+    call = ToolCall("t", {}, output=[])
+    assert inspect_ledger([call, call], window=0).repeats == 0
+    assert inspect_ledger([call, call], window=-1).repeats == 0
+
+
+def test_canonicalise_survives_unserialisable_values():
+    import datetime
+
+    stamp = datetime.datetime(2026, 1, 1)
+    a = fingerprint("t", {"at": stamp})
+    b = fingerprint("t", {"at": datetime.datetime(2026, 1, 1)})
+    assert a == b
+
+
 def test_varied_calls_returning_the_identical_result_are_stale_results():
     verdict = inspect_ledger(
         [
@@ -112,11 +134,11 @@ def test_trailing_same_class_errors_are_counted_as_a_consecutive_run():
             ToolCall("t", {"i": 1}, output="ok"),
             ToolCall("t", {"i": 2}, error=ValueError("bad limit")),
             ToolCall("t", {"i": 3}, error=ValueError("bad offset")),
-            ToolCall("t", {"i": 4}, error=ValueError("bad page")),
+            ToolCall("t", {"i": 4}, error="ValueError"),
         ]
     )
     assert verdict.consecutive_errors == 3
-    assert verdict.error_class == "ValueError"
+    assert verdict.error_class == "valueerror"
 
 
 def test_a_success_or_a_different_error_class_breaks_the_error_run():
@@ -141,7 +163,7 @@ def test_a_success_or_a_different_error_class_breaks_the_error_run():
 
 
 def test_classify_error_picks_the_most_specific_stable_label():
-    assert classify_error(TypeError("x is not callable")) == "TypeError"
+    assert classify_error(TypeError("x is not callable")) == "typeerror"
     assert classify_error({"code": "ETIMEDOUT", "message": "took 30s"}) == "etimedout"
     assert classify_error({"status": 404, "body": "varies"}) == "404"
     assert classify_error("  Rate Limited ") == "rate limited"

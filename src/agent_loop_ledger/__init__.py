@@ -47,7 +47,7 @@ class LedgerVerdict:
     """Highest count of an identical normalised call in the window."""
     worst_offender: str | None = None
     stale_results: int = 0
-    """Highest count of an identical (tool, output) result in the window, across differing calls."""
+    """Highest count of distinct calls in the window returning an identical (tool, output) result."""
     stale_result_tool: str | None = None
     consecutive_errors: int = 0
     """Length of the trailing run of same-class errors."""
@@ -64,7 +64,8 @@ def canonicalise(value: Any) -> str:
             (str(k).lower(), v) for k, v in value.items() if v is not None and v != ""
         )
         return "{" + ",".join(f"{k}:{canonicalise(v)}" for k, v in items) + "}"
-    return json.dumps(value)
+    # default=repr: detection must never crash the loop on unserialisable values.
+    return json.dumps(value, default=repr)
 
 
 def fingerprint(tool_name: str, args: Any = None) -> str:
@@ -77,7 +78,7 @@ def result_fingerprint(tool_name: str, output: Any) -> str:
 
 def classify_error(error: Any) -> str:
     if isinstance(error, BaseException):
-        return type(error).__name__
+        return type(error).__name__.lower()
     if isinstance(error, str):
         return error.strip().lower()
     if isinstance(error, dict):
@@ -91,17 +92,17 @@ def classify_error(error: Any) -> str:
 
 
 def inspect_ledger(calls: Sequence[ToolCall], *, window: int = 10) -> LedgerVerdict:
-    recent = list(calls)[-window:]
+    recent = list(calls)[-window:] if window > 0 else []
 
     call_counts: dict[str, int] = {}
-    result_counts: dict[str, int] = {}
+    result_sources: dict[str, set[str]] = {}
     result_tools: dict[str, str] = {}
     for call in recent:
         key = fingerprint(call.tool_name, call.args)
         call_counts[key] = call_counts.get(key, 0) + 1
         if call.output is not UNSET:
             result_key = result_fingerprint(call.tool_name, call.output)
-            result_counts[result_key] = result_counts.get(result_key, 0) + 1
+            result_sources.setdefault(result_key, set()).add(key)
             result_tools.setdefault(result_key, call.tool_name)
 
     def max_entry(counts: dict[str, int]) -> tuple[int, str | None]:
@@ -112,7 +113,9 @@ def inspect_ledger(calls: Sequence[ToolCall], *, window: int = 10) -> LedgerVerd
         return best_count, best_key
 
     repeats, worst_offender = max_entry(call_counts)
-    stale_results, stale_result_key = max_entry(result_counts)
+    stale_results, stale_result_key = max_entry(
+        {key: len(sources) for key, sources in result_sources.items()}
+    )
 
     consecutive_errors = 0
     error_class: str | None = None
