@@ -37,7 +37,15 @@ In an agent loop, collect the calls made so far (with outputs and errors where y
 
 Normalisation rules: tool names and string values are lowercased and stripped, dict keys are sorted, and parameters that are `None` or `""` are dropped. Error classes are derived from the exception type name, a dict's `code`, `status` or `name`, or the normalised value itself.
 
-Tune per use case: 3 repeats is a sensible default threshold (2 if tools are expensive or have side effects), and the window (default 10) bounds how far back signals are counted so a legitimate re-read much later in a long run is not punished.
+## Tuning
+
+Three numbers do different jobs; keep them distinct:
+
+- **The step budget** (your loop's iteration cap) is the total-work limit. It bounds every run, stuck or not. The ledger complements it; always keep both.
+- **The window** (default 10, pass `window=`) is how far back the ledger looks: the last N tool calls.
+- **The threshold** you compare the verdict against is how many occurrences within the window trigger intervention. 3 is a sensible default; 2 when tools are expensive or have side effects.
+
+Coverage follows from window and threshold. A repeating cycle of length k appears about `ceil(window / k)` times in the window, so the defaults catch any cycle up to length 4 at 3 occurrences and up to length 9 at 2. Counting is per fingerprint, not per sequence, so interleaved noise and reordered laps do not evade it. For longer exact cycles, widen the window; two-lap sequence detection is tracked in [agent-loop-ledger#2](https://github.com/jackawatts/agent-loop-ledger/issues/2). A legitimate re-read much later in a long run stays unpunished because it falls outside the window.
 
 Detection is the safety net, not the fix. If an agent loops, the tool results usually gave it nothing to act on (empty lists, bare errors). Make tool results say what to try next. And when a signal trips, log the run: every tripped ledger is a regression case for your evals.
 
